@@ -1,0 +1,7 @@
+scikit-learn
+tensorflow==2.15
+matplotlib
+numpy
+pandas
+yahoo_fin
+requests_html
