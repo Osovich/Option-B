@@ -101,16 +101,16 @@ def load_and_process_data(ticker, start_date, end_date,
     # Prepare train/test split
     if split_method == 'date':
         split_date = data.index[int(len(data) * train_ratio)] # Splitting the data using date
-        train_data = data.loc[:split_date] # Only 
+        train_data = data.loc[:split_date] # Only take into account the data of this specific date
     elif split_method == 'random':
-        train_data = train_test_split(data, test_size=1-train_ratio, shuffle=False)
+        train_data = train_test_split(data, test_size=1-train_ratio, shuffle=True)
     else:
         raise ValueError("Invalid split_method. Choose 'date' or 'random'.")
     
     # Prepare training data
     x_train, y_train = [], []
-    for i in range(len(train_data)):
-        if i >= PREDICTION_DAYS:
+    for i in range(len(train_data)): # Go thru all the training data and append the scaled data to both x_train and y_train
+        if i >= PREDICTION_DAYS: # Goes thru all days and maps the scaling into the graph.
             x_train.append(scaled_data[i - PREDICTION_DAYS:i])
             y_train.append(scaled_data[i])
     x_train, y_train = np.array(x_train), np.array(y_train)
