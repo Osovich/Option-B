@@ -52,8 +52,7 @@ TRAIN_END = '2023-08-01'       # End date to read
 # Get the data for the stock AAPL
 def load_and_process_data(ticker, start_date, end_date, 
                           save_data=False, data_dir='data', 
-                          split_method='date', train_ratio=0.8, 
-                          nan_method='drop'):
+                          split_method='date', train_ratio=0.8):
     """
     Load and process stock data with multiple features.
     
@@ -65,10 +64,9 @@ def load_and_process_data(ticker, start_date, end_date,
     - data_dir: Directory to save or load the data.
     - split_method: Method to split the data ('date' or 'random').
     - train_ratio: Ratio of training data to the total data (if split_method='random').
-    - nan_method: Method to handle NaN values ('drop' or 'fill').
     
     Returns:
-    - x_train, y_train, x_test, y_test: Processed training and testing data.
+    - x_train, y_train, data.
     """
     
     # Create data directory if not exists
@@ -81,6 +79,7 @@ def load_and_process_data(ticker, start_date, end_date,
     # Load data
     if os.path.exists(file_path):
         print(f"Loading data from {file_path}")
+        # Read from CSV if the data exists.
         data = pd.read_csv(file_path, index_col='Date', parse_dates=True)
     else:
         print(f"Fetching data for {ticker} from Yahoo Finance")
@@ -101,11 +100,10 @@ def load_and_process_data(ticker, start_date, end_date,
     
     # Prepare train/test split
     if split_method == 'date':
-        split_date = data.index[int(len(data) * train_ratio)]
-        train_data = data.loc[:split_date]
-        test_data = data.loc[split_date:]
+        split_date = data.index[int(len(data) * train_ratio)] # Splitting the data using date
+        train_data = data.loc[:split_date] # Only 
     elif split_method == 'random':
-        train_data, test_data = train_test_split(data, test_size=1-train_ratio, shuffle=False)
+        train_data = train_test_split(data, test_size=1-train_ratio, shuffle=False)
     else:
         raise ValueError("Invalid split_method. Choose 'date' or 'random'.")
     
@@ -118,16 +116,7 @@ def load_and_process_data(ticker, start_date, end_date,
     x_train, y_train = np.array(x_train), np.array(y_train)
     x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
     
-    # # Prepare testing data
-    # model_inputs = scaled_data[len(scaled_data) - len(test_data) - PREDICTION_DAYS:]
-    # x_test = []
-    # for i in range(len(model_inputs)):
-    #     if i >= PREDICTION_DAYS:
-    #         x_test.append(model_inputs[i - PREDICTION_DAYS:i])
-    # x_test = np.array(x_test)
-    # x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
-    
-    return x_train, y_train, data
+    return x_train, y_train, train_data
 
 
 #------------------------------------------------------------------------------
