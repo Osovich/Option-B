@@ -100,10 +100,10 @@ def load_and_process_data(ticker, start_date, end_date,
     
     # Prepare train/test split
     if split_method == 'date':
-        split_date = data.index[int(len(data) * train_ratio)] # Splitting the data using date
+        split_date = data.index[int(len(data) * train_ratio)] # Point in time where the data is split
         train_data = data.loc[:split_date] # Only take into account the data of this specific date
     elif split_method == 'random':
-        train_data = train_test_split(data, test_size=1-train_ratio, shuffle=True)
+        train_data = train_test_split(data, test_size=1-train_ratio, shuffle=True) # This function splits the data into random subesets.
     else:
         raise ValueError("Invalid split_method. Choose 'date' or 'random'.")
     
@@ -114,7 +114,7 @@ def load_and_process_data(ticker, start_date, end_date,
             x_train.append(scaled_data[i - PREDICTION_DAYS:i])
             y_train.append(scaled_data[i])
     x_train, y_train = np.array(x_train), np.array(y_train)
-    x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
+    x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1)) # The data is reshaped, like it used to before.
     
     return x_train, y_train, train_data
 
