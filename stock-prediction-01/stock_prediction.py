@@ -16,16 +16,21 @@
 # pip install pandas-datareader
 # pip install yfinance
 
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import pandas_datareader as web
 import datetime as dt
 import tensorflow as tf
+import yfinance as yf
+
 
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, LSTM, InputLayer
+from sklearn.model_selection import train_test_split
+
 
 #------------------------------------------------------------------------------
 # Load Data
@@ -43,10 +48,87 @@ TRAIN_END = '2023-08-01'       # End date to read
 # data = web.DataReader(COMPANY, DATA_SOURCE, TRAIN_START, TRAIN_END) # Read data using yahoo
 
 
-import yfinance as yf
 
 # Get the data for the stock AAPL
-data = yf.download(COMPANY,TRAIN_START,TRAIN_END)
+def load_and_process_data(ticker, start_date, end_date, 
+                          save_data=False, data_dir='data', 
+                          split_method='date', train_ratio=0.8, 
+                          nan_method='drop'):
+    """
+    Load and process stock data with multiple features.
+    
+    Parameters:
+    - ticker: Stock ticker symbol.
+    - start_date: Start date of the data (format: 'YYYY-MM-DD').
+    - end_date: End date of the data (format: 'YYYY-MM-DD').
+    - save_data: If True, save the data to local storage.
+    - data_dir: Directory to save or load the data.
+    - split_method: Method to split the data ('date' or 'random').
+    - train_ratio: Ratio of training data to the total data (if split_method='random').
+    - nan_method: Method to handle NaN values ('drop' or 'fill').
+    
+    Returns:
+    - x_train, y_train, x_test, y_test: Processed training and testing data.
+    """
+    
+    # Create data directory if not exists
+    if save_data and not os.path.exists(data_dir):
+        os.makedirs(data_dir)
+    
+    # File path for saving/loading data
+    file_path = os.path.join(data_dir, f'{ticker}_{start_date}_{end_date}.csv')
+    
+    # Load data
+    if os.path.exists(file_path):
+        print(f"Loading data from {file_path}")
+        data = pd.read_csv(file_path, index_col='Date', parse_dates=True)
+    else:
+        print(f"Fetching data for {ticker} from Yahoo Finance")
+        data = yf.download(ticker, start=start_date, end=end_date)
+        if save_data:
+            data.to_csv(file_path)
+    
+    # Handle NaN values
+    data = data.dropna()
+    
+    # Define feature and target
+    PRICE_VALUE = "Close"
+    features = data[[PRICE_VALUE]].values
+    
+    # Scale data
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_data = scaler.fit_transform(features)
+    
+    # Prepare train/test split
+    if split_method == 'date':
+        split_date = data.index[int(len(data) * train_ratio)]
+        train_data = data.loc[:split_date]
+        test_data = data.loc[split_date:]
+    elif split_method == 'random':
+        train_data, test_data = train_test_split(data, test_size=1-train_ratio, shuffle=False)
+    else:
+        raise ValueError("Invalid split_method. Choose 'date' or 'random'.")
+    
+    # Prepare training data
+    x_train, y_train = [], []
+    for i in range(len(train_data)):
+        if i >= PREDICTION_DAYS:
+            x_train.append(scaled_data[i - PREDICTION_DAYS:i])
+            y_train.append(scaled_data[i])
+    x_train, y_train = np.array(x_train), np.array(y_train)
+    x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
+    
+    # # Prepare testing data
+    # model_inputs = scaled_data[len(scaled_data) - len(test_data) - PREDICTION_DAYS:]
+    # x_test = []
+    # for i in range(len(model_inputs)):
+    #     if i >= PREDICTION_DAYS:
+    #         x_test.append(model_inputs[i - PREDICTION_DAYS:i])
+    # x_test = np.array(x_test)
+    # x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
+    
+    return x_train, y_train, data
+
 
 #------------------------------------------------------------------------------
 # Prepare Data
@@ -58,8 +140,19 @@ data = yf.download(COMPANY,TRAIN_START,TRAIN_END)
 # 3) Change the Prediction days
 #------------------------------------------------------------------------------
 PRICE_VALUE = "Close"
+PREDICTION_DAYS = 60 # Original
 
 scaler = MinMaxScaler(feature_range=(0, 1)) 
+
+x_train, y_train, data = load_and_process_data(
+    ticker='CBA.AX',
+    start_date=TRAIN_START,
+    end_date=TRAIN_END,
+    save_data=True,
+    data_dir='data',
+    split_method='date'
+)
+
 # Note that, by default, feature_range=(0, 1). Thus, if you want a different 
 # feature_range (min,max) then you'll need to specify it here
 scaled_data = scaler.fit_transform(data[PRICE_VALUE].values.reshape(-1, 1)) 
@@ -79,24 +172,15 @@ scaled_data = scaler.fit_transform(data[PRICE_VALUE].values.reshape(-1, 1))
 # given to reshape so as to maintain the same number of elements.
 
 # Number of days to look back to base the prediction
-PREDICTION_DAYS = 60 # Original
 
 # To store the training data
-x_train = []
-y_train = []
 
 scaled_data = scaled_data[:,0] # Turn the 2D array back to a 1D array
-# Prepare the data
-for x in range(PREDICTION_DAYS, len(scaled_data)):
-    x_train.append(scaled_data[x-PREDICTION_DAYS:x])
-    y_train.append(scaled_data[x])
 
 # Convert them into an array
-x_train, y_train = np.array(x_train), np.array(y_train)
 # Now, x_train is a 2D array(p,q) where p = len(scaled_data) - PREDICTION_DAYS
 # and q = PREDICTION_DAYS; while y_train is a 1D array(p)
 
-x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
 # We now reshape x_train into a 3D array(p, q, 1); Note that x_train 
 # is an array of p inputs with each input being a 2D array 
 
@@ -225,6 +309,7 @@ model_inputs = scaler.transform(model_inputs)
 # Make predictions on test data
 #------------------------------------------------------------------------------
 x_test = []
+
 for x in range(PREDICTION_DAYS, len(model_inputs)):
     x_test.append(model_inputs[x - PREDICTION_DAYS:x, 0])
 
