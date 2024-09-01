@@ -1,3 +1,12 @@
 
 /stock-prediction-01/logs
 /stock-prediction/logs
+stock-prediction-02/csv-results/2021-05-31_AMZN-sh-1-sc-1-sbd-0-huber_loss-adam-LSTM-seq-50-step-15-layers-2-units-256.csv
+stock-prediction-02/csv-results/2024-08-15_AMZN-sh-1-sc-1-sbd-0-huber_loss-adam-LSTM-seq-50-step-15-layers-2-units-256.csv
+stock-prediction-02/csv-results/2024-08-16_AMZN-sh-1-sc-1-sbd-0-huber_loss-adam-LSTM-seq-50-step-15-layers-2-units-256.csv
+stock-prediction-02/data/AMZN_2021-05-31.csv
+stock-prediction-02/data/AMZN_2024-08-15.csv
+stock-prediction-02/data/AMZN_2024-08-16.csv
+stock-prediction-02/logs/2020-12-11_AMZN-sh-1-sc-1-sbd-0-huber_loss-adam-LSTM-seq-50-step-15-layers-2-units-256/train/events.out.tfevents.1607697615.DESKTOP-JCAH48A.12800.1315.v2
+stock-prediction-02/logs/2020-12-11_AMZN-sh-1-sc-1-sbd-0-huber_loss-adam-LSTM-seq-50-step-15-layers-2-units-256/train/events.out.tfevents.1607697620.DESKTOP-JCAH48A.profile-empty
+stock-prediction-02/logs/2020-12-11_AMZN-sh-1-sc-1-sbd-0-huber_loss-adam-LSTM-seq-50-step-15-layers-2-units-256/validation/events.out.tfevents.1607697622.DESKTOP-JCAH48A.12800.7403.v2
