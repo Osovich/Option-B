@@ -19,12 +19,12 @@ import pickle
 import mplfinance as mpf
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, LSTM
+from tensorflow.keras.layers import Dense, Dropout, LSTM, GRU, SimpleRNN, Bidirectional
 from sklearn.model_selection import train_test_split
 
 
 def load_and_process_data(
-    ticker, 
+    company, 
     start_date, 
     end_date,
     save_data,
@@ -33,7 +33,7 @@ def load_and_process_data(
     feature_columns=[], 
     split_method='date', 
     split_ratio=0.8, 
-    split_date=None, 
+    split_date=None,
     scale_features=False, 
     scale_min=0, 
     scale_max=1, 
@@ -44,7 +44,7 @@ def load_and_process_data(
     Load and process stock data with multiple features.
 
     Parameters:
-        ticker (str): Company ticker symbol.
+        company (str): Company name.
         start_date (str): Start date for the dataset in 'YYYY-MM-DD' format.
         end_date (str): End date for the dataset in 'YYYY-MM-DD' format.
         save_data (bool): Whether to save the dataset to a file.
@@ -61,7 +61,7 @@ def load_and_process_data(
         data_dir (str): Directory to save the data.
 
     Returns:
-        dict: Dictionary containing processed data and other relevant information.
+        processed_data: Dictionary containing processed data and other relevant information.
     """
 
     # Create data directory if it doesn't exist
@@ -69,15 +69,15 @@ def load_and_process_data(
         os.makedirs(data_dir)
     
     # File path for saving/loading data
-    file_path = os.path.join(data_dir, f'{ticker}_{start_date}_{end_date}.csv')
+    file_path = os.path.join(data_dir, f'{company}_{start_date}_{end_date}.csv')
     
     # Load data
     if os.path.exists(file_path):
         print(f"Loading data from {file_path}")
         data = pd.read_csv(file_path, index_col='Date', parse_dates=True)
     else:
-        print(f"Fetching data for {ticker} from Yahoo Finance")
-        data = yf.download(ticker, start=start_date, end=end_date)
+        print(f"Fetching data for {company} from Yahoo Finance")
+        data = yf.download(company, start=start_date, end=end_date)
         if save_data:
             data.to_csv(file_path)
     
@@ -121,7 +121,7 @@ def load_and_process_data(
             scalers_dir = os.path.join(os.getcwd(), 'scalers')
             if not os.path.exists(scalers_dir):
                 os.makedirs(scalers_dir)
-            scaler_file_path = os.path.join(scalers_dir, f"{ticker}_{start_date}_{end_date}_scalers.pkl")
+            scaler_file_path = os.path.join(scalers_dir, f"{company}_{start_date}_{end_date}_scalers.pkl")
             with open(scaler_file_path, 'wb') as f:
                 pickle.dump(scaler_dict, f)
        
@@ -136,18 +136,18 @@ def load_and_process_data(
     # Prepare training and testing datasets for LSTM
     x_train, y_train = [], []
     for i in range(prediction_days, len(train_data)):
-        x_train.append(train_data[prediction_column].iloc[i-prediction_days:i])
+        x_train.append(train_data[feature_columns].iloc[i-prediction_days:i])
         y_train.append(train_data[prediction_column].iloc[i])
 
-    processed_data["x_train"] = np.array(x_train).reshape(-1, prediction_days, 1)
+    processed_data["x_train"] = np.array(x_train).reshape(-1, prediction_days, len(feature_columns))
     processed_data["y_train"] = np.array(y_train)
     
     x_test, y_test = [], []
     for i in range(prediction_days, len(test_data)):
-        x_test.append(test_data[prediction_column].iloc[i-prediction_days:i])
+        x_test.append(test_data[feature_columns].iloc[i-prediction_days:i])
         y_test.append(test_data[prediction_column].iloc[i])
 
-    processed_data["x_test"] = np.array(x_test).reshape(-1, prediction_days, 1)
+    processed_data["x_test"] = np.array(x_test).reshape(-1, prediction_days, len(feature_columns))
     processed_data["y_test"] = np.array(y_test)
 
     return processed_data
@@ -175,7 +175,7 @@ def plot_candlestick_chart(df, title, n=1):
     mpf.plot(df_resampled, type='candle', volume=True, title=title)
 
 
-def plot_boxplot_chart(df, title, n=10):
+def plot_boxplot_chart(df, title, n=10, label_interval=90):
     """
     Plot a boxplot chart for the stock data over a moving window.
 
@@ -183,34 +183,80 @@ def plot_boxplot_chart(df, title, n=10):
         df (pd.DataFrame): The stock data.
         title (str): Title of the chart.
         n (int): Size of the moving window in trading days (default is 10).
+        label_interval (int): Interval between labels on the x-axis.
     """
-    # Manually create a list of lists for the boxplot data
+    # Create the moving window data for the boxplots
     moving_windows = [df['Close'].iloc[i:i+n].tolist() for i in range(len(df) - n + 1)]
 
     # Generate dates for the x-axis labels
     dates = df.index[n-1:]
 
     # Plot the boxplot chart
-    plt.figure(figsize=(10, 6))
-    plt.boxplot(moving_windows, labels=dates.strftime('%Y-%m-%d'), patch_artist=True)
+    plt.figure(figsize=(12, 9))
+    plt.boxplot(moving_windows, patch_artist=True)
+
+    # Set title and labels
     plt.title(title)
     plt.xlabel('Date')
     plt.ylabel('Price')
-    plt.xticks(rotation=45)
+
+    # Apply interval to x-axis labels
+    plt.xticks(ticks=range(0, len(dates), label_interval), labels=dates.strftime('%Y-%m')[::label_interval], rotation=45)
+
     plt.show()
 
+
+def create_dl_model(layer_type, num_layers, layer_size, input_shape, dropout_rate=0.2, optimizer = "adam", loss = "mean_squared_error"):
+    """
+    Function to dynamically create a deep learning model.
+
+    Parameters:
+        layer_type (str): The type of layer to use ('LSTM', 'GRU', 'RNN').
+        num_layers (int): The number of layers in the model.
+        layer_size (int): The number of units in each layer.
+        input_shape (tuple): The shape of the input data (timesteps, features).
+        dropout_rate (float): The dropout rate for regularization.
+    
+    Returns:
+        model: Compiled deep learning model.
+    """
+    model = Sequential()
+    
+    # Dynamically add layers based on layer_type and number of layers
+    for i in range(num_layers):
+        if i == 0:
+            # For First Layer
+            model.add(layer_type(units=layer_size, return_sequences=True, batch_input_shape=input_shape))
+        elif i == num_layers - 1:
+            # For Last Layer
+            model.add(layer_type(units=layer_size, return_sequences=False))
+        else:
+            # Black Box Layers
+            model.add(layer_type(units=layer_size, return_sequences=True))
+
+        # Add dropout for regularization
+        model.add(Dropout(dropout_rate))
+    
+    # Final dense layer
+    model.add(Dense(units=1, activation= "linear"))
+    
+    # Compile the model
+    model.compile(loss=loss, metrics = ["mean_squared_error"], optimizer=optimizer)
+    
+    return model
 
 
 # Define parameters
 COMPANY = "CBA.AX"  
-DATA_START_DATE = '2015-01-01'
+DATA_START_DATE = '2020-01-01'
 DATA_END_DATE = '2022-12-31'
 SAVE_DATA = True
-PREDICTION_DAYS = 100
+PREDICTION_DAYS = 20
 SPLIT_METHOD = 'random'
 SPLIT_RATIO = 0.8
-SPLIT_DATE = '2020-01-02'
-FEATURE_COLUMNS = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
+SPLIT_DATE = '2021-01-02'
+# FEATURE_COLUMNS = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
+FEATURE_COLUMNS = ['Close']
 SCALE_FEATURES = True
 SCALE_MIN = 0
 SCALE_MAX = 1
@@ -219,7 +265,7 @@ PREDICTION_COLUMN = "Close"
 
 # Load and process data
 data = load_and_process_data(
-    ticker=COMPANY, 
+    company=COMPANY, 
     start_date=DATA_START_DATE, 
     end_date=DATA_END_DATE, 
     save_data=SAVE_DATA,
@@ -241,25 +287,34 @@ plot_candlestick_chart(data['df'], title=f"{COMPANY} Candlestick Chart", n=5)
 # Plot boxplot chart
 plot_boxplot_chart(data['df'], title=f"{COMPANY} Boxplot Chart", n=10)
 
+layer_type = SimpleRNN  # Can be 'LSTM', 'GRU', or 'SimpleRNN'
+num_layers = 3
+layer_size = 50
+input_shape = (None, data["x_train"].shape[1], len(FEATURE_COLUMNS))  # Timesteps and features
+
+
 # Model creation
-model = Sequential()
+# model = Sequential()
 
-# LSTM layers with dropout for regularization
-model.add(LSTM(units=50, return_sequences=True, input_shape=(data["x_train"].shape[1], 1)))
-model.add(Dropout(0.2))
-model.add(LSTM(units=50, return_sequences=True))
-model.add(Dropout(0.2))
-model.add(LSTM(units=50))
-model.add(Dropout(0.2))
+# # LSTM layers with dropout for regularization
+# model.add(LSTM(units=50, return_sequences=True, input_shape=(data["x_train"].shape[1], 1)))
+# model.add(Dropout(0.2))
+# model.add(LSTM(units=50, return_sequences=True))
+# model.add(Dropout(0.2))
+# model.add(LSTM(units=50))
+# model.add(Dropout(0.2))
 
-# Dense layer for final prediction output
-model.add(Dense(units=1))
+# # Dense layer for final prediction output
+# model.add(Dense(units=1))
 
-# Compile model with optimizer and loss function
-model.compile(optimizer='adam', loss='mean_squared_error')
+# # Compile model with optimizer and loss function
+# model.compile(optimizer='adam', loss='mean_squared_error')
+
+# Create and compile the model
+model = create_dl_model(layer_type, num_layers, layer_size, input_shape)
 
 # Train the model
-model.fit(data["x_train"], data["y_train"], epochs=25, batch_size=32)
+model.fit(data["x_train"], data["y_train"], epochs=10, batch_size=32)
 
 # Test the model and plot predictions
 actual_prices = data["column_scaler"][PREDICTION_COLUMN].inverse_transform(data["y_test"].reshape(-1, 1))
