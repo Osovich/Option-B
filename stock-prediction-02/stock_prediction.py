@@ -22,6 +22,23 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, LSTM, GRU, SimpleRNN, Bidirectional
 from sklearn.model_selection import train_test_split
 
+# Define parameters
+COMPANY = "CBA.AX"  
+DATA_START_DATE = '2015-01-01'
+DATA_END_DATE = '2022-12-31'
+SAVE_DATA = True
+PREDICTION_DAYS = 20
+SPLIT_METHOD = 'random'
+SPLIT_RATIO = 0.8
+SPLIT_DATE = '2021-01-02'
+# FEATURE_COLUMNS = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
+FEATURE_COLUMNS = ['Close']
+SCALE_FEATURES = True
+SCALE_MIN = 0
+SCALE_MAX = 1
+SAVE_SCALERS = True
+PREDICTION_COLUMN = "Close"
+EPOCHS = 15
 
 def load_and_process_data(
     company, 
@@ -211,12 +228,14 @@ def create_dl_model(layer_type, num_layers, layer_size, input_shape, dropout_rat
     Function to dynamically create a deep learning model.
 
     Parameters:
-        layer_type (str): The type of layer to use ('LSTM', 'GRU', 'RNN').
+        layer_type (import): The type of layer to use ('LSTM', 'GRU', 'SimpleRNN').
         num_layers (int): The number of layers in the model.
         layer_size (int): The number of units in each layer.
         input_shape (tuple): The shape of the input data (timesteps, features).
         dropout_rate (float): The dropout rate for regularization.
-    
+        optimizer (str): The optimization technique used, adam by default.
+        loss (str): The loss technique used. From class, the one preferred by me was mean_squared_error.
+        
     Returns:
         model: Compiled deep learning model.
     """
@@ -226,13 +245,15 @@ def create_dl_model(layer_type, num_layers, layer_size, input_shape, dropout_rat
     for i in range(num_layers):
         if i == 0:
             # For First Layer
-            model.add(layer_type(units=layer_size, return_sequences=True, batch_input_shape=input_shape))
+            layer = layer_type(units=layer_size, return_sequences=True, batch_input_shape=input_shape)
         elif i == num_layers - 1:
             # For Last Layer
-            model.add(layer_type(units=layer_size, return_sequences=False))
+            layer = layer_type(units=layer_size, return_sequences=False)
         else:
             # Black Box Layers
-            model.add(layer_type(units=layer_size, return_sequences=True))
+            layer = layer_type(units=layer_size, return_sequences=True)
+
+        model.add(layer)
 
         # Add dropout for regularization
         model.add(Dropout(dropout_rate))
@@ -245,23 +266,6 @@ def create_dl_model(layer_type, num_layers, layer_size, input_shape, dropout_rat
     
     return model
 
-
-# Define parameters
-COMPANY = "CBA.AX"  
-DATA_START_DATE = '2020-01-01'
-DATA_END_DATE = '2022-12-31'
-SAVE_DATA = True
-PREDICTION_DAYS = 20
-SPLIT_METHOD = 'random'
-SPLIT_RATIO = 0.8
-SPLIT_DATE = '2021-01-02'
-# FEATURE_COLUMNS = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
-FEATURE_COLUMNS = ['Close']
-SCALE_FEATURES = True
-SCALE_MIN = 0
-SCALE_MAX = 1
-SAVE_SCALERS = True
-PREDICTION_COLUMN = "Close"
 
 # Load and process data
 data = load_and_process_data(
@@ -287,9 +291,9 @@ plot_candlestick_chart(data['df'], title=f"{COMPANY} Candlestick Chart", n=5)
 # Plot boxplot chart
 plot_boxplot_chart(data['df'], title=f"{COMPANY} Boxplot Chart", n=10)
 
-layer_type = SimpleRNN  # Can be 'LSTM', 'GRU', or 'SimpleRNN'
+layer_type = LSTM  # Can be 'LSTM', 'GRU', or 'SimpleRNN'
 num_layers = 3
-layer_size = 50
+layer_size = 100
 input_shape = (None, data["x_train"].shape[1], len(FEATURE_COLUMNS))  # Timesteps and features
 
 
@@ -314,11 +318,13 @@ input_shape = (None, data["x_train"].shape[1], len(FEATURE_COLUMNS))  # Timestep
 model = create_dl_model(layer_type, num_layers, layer_size, input_shape)
 
 # Train the model
-model.fit(data["x_train"], data["y_train"], epochs=10, batch_size=32)
+model.fit(data["x_train"], data["y_train"], epochs=EPOCHS, batch_size=32)
 
 # Test the model and plot predictions
 actual_prices = data["column_scaler"][PREDICTION_COLUMN].inverse_transform(data["y_test"].reshape(-1, 1))
 predicted_prices = model.predict(data['x_test'])
+# # If the predicted_prices is 3D, reshape it to 2D for inverse_transform
+# predicted_prices = predicted_prices.reshape(-1, 1)
 predicted_prices = data["column_scaler"][PREDICTION_COLUMN].inverse_transform(predicted_prices)
 
 plt.plot(actual_prices, color="black", label=f"Actual {COMPANY} Price")
