@@ -1,15 +1,3 @@
-# File: stock_prediction.py
-# Authors: Bao Vo and Cheong Koo
-# Date: 14/07/2021(v1); 19/07/2021 (v2); 02/07/2024 (v3)
-
-# Description:
-# This script loads stock data, preprocesses it, trains a Long Short-Term Memory (LSTM) model,
-# and predicts future stock prices. It also includes functions for visualizing data using candlestick
-# and boxplot charts. The code is designed to be modular and easily modifiable.
-
-# Requirements:
-# pip install numpy matplotlib pandas tensorflow scikit-learn yfinance mplfinance
-
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -27,18 +15,23 @@ COMPANY = "CBA.AX"
 DATA_START_DATE = '2015-01-01'
 DATA_END_DATE = '2022-12-31'
 SAVE_DATA = True
-PREDICTION_DAYS = 20
+PREDICTION_DAYS = 60
 SPLIT_METHOD = 'random'
 SPLIT_RATIO = 0.8
 SPLIT_DATE = '2021-01-02'
-# FEATURE_COLUMNS = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
-FEATURE_COLUMNS = ['Close']
+FEATURE_COLUMNS = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
+# FEATURE_COLUMNS = ['Close']
 SCALE_FEATURES = True
 SCALE_MIN = 0
 SCALE_MAX = 1
 SAVE_SCALERS = True
 PREDICTION_COLUMN = "Close"
-EPOCHS = 15
+EPOCHS = 10
+BATCH_SIZE = 32
+PREDICTION_STEPS = 10
+
+
+
 
 def load_and_process_data(
     company, 
@@ -150,7 +143,7 @@ def load_and_process_data(
     processed_data["scaled_train"] = train_data
     processed_data["scaled_test"] = test_data
 
-    # Prepare training and testing datasets for LSTM
+    # Prepare training and testing datasets for DL
     x_train, y_train = [], []
     for i in range(prediction_days, len(train_data)):
         x_train.append(train_data[feature_columns].iloc[i-prediction_days:i])
@@ -168,6 +161,55 @@ def load_and_process_data(
     processed_data["y_test"] = np.array(y_test)
 
     return processed_data
+
+def multi_step_predict(model, last_n_days, prediction_steps, feature_columns, scaler, prediction_column='Close'):
+    """
+    Predicts multiple future 'Close' prices (steps) based on the last n days of input data with multiple features.
+
+    Parameters:
+        model: Trained deep learning model for stock price prediction.
+        last_n_days (np.array): The last n days of data (features) to use for prediction, shape (1, n, features).
+        prediction_steps (int): Number of steps (days) to predict into the future.
+        feature_columns (list): List of feature column names.
+        scaler (sklearn scaler): Scaler used to inverse transform the predictions.
+        prediction_column (str): The target column to predict ('Close').
+
+    Returns:
+        future_prices (list): List of predicted 'Close' prices for the next `prediction_steps` days.
+    """
+    current_input = last_n_days.copy()  # Shape: (1, n, features)
+    future_prices = []
+
+    for _ in range(prediction_steps):
+        # Predict the next 'Close' price
+        next_price_scaled = model.predict(current_input)  # Shape: (1, 1)
+
+        # Inverse transform to get the actual price
+        next_price = scaler.inverse_transform(next_price_scaled)[0][0]
+        future_prices.append(next_price)
+
+        # Prepare the next input sequence
+        # Create a new input array where 'Close' is updated with the predicted price
+        # and other features can be carried forward or set as needed.
+        next_price_scaled_reshaped = next_price_scaled.reshape((1, 1, 1))  # Shape: (1, 1, 1)
+
+        # If there are other features, decide how to handle them.
+        # Here, we'll carry forward the last known values for other features.
+        # Extract the last day's data
+        last_day = current_input[0, -1, :].copy()  # Shape: (features,)
+
+        # Update the 'Close' feature with the predicted price
+        close_index = feature_columns.index(prediction_column)
+        last_day[close_index] = next_price_scaled[0][0]
+
+        # Reshape to (1, 1, features)
+        new_day = last_day.reshape((1, 1, -1))
+
+        # Append the new_day to current_input and remove the first day to maintain the sequence length
+        current_input = np.concatenate((current_input[:, 1:, :], new_day), axis=1)
+
+    return future_prices
+
 
 
 def plot_candlestick_chart(df, title, n=1):
@@ -282,49 +324,31 @@ data = load_and_process_data(
     scale_features=SCALE_FEATURES,
     scale_min=SCALE_MIN,
     scale_max=SCALE_MAX,
-    save_scalers=SAVE_SCALERS
+    save_scalers=SAVE_SCALERS,
 )
 
-# Plot candlestick chart
-plot_candlestick_chart(data['df'], title=f"{COMPANY} Candlestick Chart", n=5)
+# # Plot candlestick chart
+# plot_candlestick_chart(data['df'], title=f"{COMPANY} Candlestick Chart", n=5)
 
-# Plot boxplot chart
-plot_boxplot_chart(data['df'], title=f"{COMPANY} Boxplot Chart", n=10)
+# # Plot boxplot chart
+# plot_boxplot_chart(data['df'], title=f"{COMPANY} Boxplot Chart", n=10)
 
-layer_type = LSTM  # Can be 'LSTM', 'GRU', or 'SimpleRNN'
+layer_type = GRU  # Can be 'LSTM', 'GRU', or 'SimpleRNN'
 num_layers = 3
-layer_size = 100
-input_shape = (None, data["x_train"].shape[1], len(FEATURE_COLUMNS))  # Timesteps and features
+layer_size = 50
+input_shape = (1, data["x_train"].shape[1], len(FEATURE_COLUMNS))  # Timesteps and features
 
-
-# Model creation
-# model = Sequential()
-
-# # LSTM layers with dropout for regularization
-# model.add(LSTM(units=50, return_sequences=True, input_shape=(data["x_train"].shape[1], 1)))
-# model.add(Dropout(0.2))
-# model.add(LSTM(units=50, return_sequences=True))
-# model.add(Dropout(0.2))
-# model.add(LSTM(units=50))
-# model.add(Dropout(0.2))
-
-# # Dense layer for final prediction output
-# model.add(Dense(units=1))
-
-# # Compile model with optimizer and loss function
-# model.compile(optimizer='adam', loss='mean_squared_error')
 
 # Create and compile the model
 model = create_dl_model(layer_type, num_layers, layer_size, input_shape)
 
 # Train the model
-model.fit(data["x_train"], data["y_train"], epochs=EPOCHS, batch_size=32)
+model.fit(data["x_train"], data["y_train"], epochs=EPOCHS, batch_size=BATCH_SIZE)
 
 # Test the model and plot predictions
 actual_prices = data["column_scaler"][PREDICTION_COLUMN].inverse_transform(data["y_test"].reshape(-1, 1))
 predicted_prices = model.predict(data['x_test'])
-# # If the predicted_prices is 3D, reshape it to 2D for inverse_transform
-# predicted_prices = predicted_prices.reshape(-1, 1)
+
 predicted_prices = data["column_scaler"][PREDICTION_COLUMN].inverse_transform(predicted_prices)
 
 plt.plot(actual_prices, color="black", label=f"Actual {COMPANY} Price")
@@ -339,12 +363,17 @@ plt.show()
 pd.DataFrame(predicted_prices, columns=["Predicted Prices"]).to_csv('predicted_prices.csv', index=False)
 pd.DataFrame(actual_prices, columns=["Actual Prices"]).to_csv('actual_prices.csv', index=False)
 
-# Predict the next day's stock price
-real_data = [data["x_test"][len(data['x_test']) - 1]]
-real_data = np.array(real_data)
 
-# Make prediction for the next day
-predicted_next_day_price = model.predict(real_data)
-predicted_next_day_price = data["column_scaler"][PREDICTION_COLUMN].inverse_transform(predicted_next_day_price)
+last_n_days = data["x_test"][-1].reshape((input_shape))
+future_prices = multi_step_predict(
+    model, 
+    last_n_days, 
+    PREDICTION_STEPS, 
+    feature_columns=FEATURE_COLUMNS, 
+    scaler=data["column_scaler"][PREDICTION_COLUMN],
+    prediction_column=PREDICTION_COLUMN
+)
 
-print(f"Predicted next day price: {predicted_next_day_price[0][0]}")
+print(f"Predicted future 'Close' prices for the next {PREDICTION_STEPS} days:")
+for i, price in enumerate(future_prices, 1):
+    print(f"Day {i}: {price:.2f}")
