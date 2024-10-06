@@ -9,6 +9,13 @@ from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, LSTM, GRU, SimpleRNN, Bidirectional
 from sklearn.model_selection import train_test_split
+from statsmodels.tsa.arima.model import ARIMA
+from pmdarima import auto_arima  # For auto ARIMA
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+
+from pmdarima.arima import ADFTest
+
+from sklearn.metrics import mean_squared_error
 
 # Define parameters
 COMPANY = "CBA.AX"  
@@ -26,9 +33,10 @@ SCALE_MIN = 0
 SCALE_MAX = 1
 SAVE_SCALERS = True
 PREDICTION_COLUMN = "Close"
-EPOCHS = 10
-BATCH_SIZE = 32
+EPOCHS = 20
+BATCH_SIZE = 64
 PREDICTION_STEPS = 10
+
 
 
 
@@ -333,7 +341,7 @@ data = load_and_process_data(
 # # Plot boxplot chart
 # plot_boxplot_chart(data['df'], title=f"{COMPANY} Boxplot Chart", n=10)
 
-layer_type = GRU  # Can be 'LSTM', 'GRU', or 'SimpleRNN'
+layer_type = SimpleRNN  # Can be 'LSTM', 'GRU', or 'SimpleRNN'
 num_layers = 3
 layer_size = 50
 input_shape = (1, data["x_train"].shape[1], len(FEATURE_COLUMNS))  # Timesteps and features
@@ -351,17 +359,43 @@ predicted_prices = model.predict(data['x_test'])
 
 predicted_prices = data["column_scaler"][PREDICTION_COLUMN].inverse_transform(predicted_prices)
 
-plt.plot(actual_prices, color="black", label=f"Actual {COMPANY} Price")
-plt.plot(predicted_prices, color="green", label=f"Predicted {COMPANY} Price")
-plt.title(f"{COMPANY} Share Price")
-plt.xlabel("Time")
-plt.ylabel(f"{COMPANY} Share Price")
-plt.legend()
-plt.show()
+
 
 # Save predictions
 pd.DataFrame(predicted_prices, columns=["Predicted Prices"]).to_csv('predicted_prices.csv', index=False)
 pd.DataFrame(actual_prices, columns=["Actual Prices"]).to_csv('actual_prices.csv', index=False)
+# data['df'].index.freq = pd.infer_freq(data['df'].index)
+# if data['df'].index.freq is None:  # If frequency couldn't be inferred
+#     data['df'].index = data['df'].index.to_period('B').to_timestamp()  # Set frequency to daily
+
+# data['df'] = data['df'].dropna()
+
+
+
+def find_sarima_params(data, seasonal_period):
+    # Perform auto_arima to find the best order and seasonal_order
+    model = auto_arima(
+        data,
+        seasonal=True,
+        m=seasonal_period,  # Set seasonal period (e.g., 7 for weekly data)
+        start_p=1, start_q=1, max_p=3, max_d=2,max_q=3,
+        start_P=0,start_Q=0,max_P=3, max_D=3,max_Q=3,
+        error_action='ignore',
+        suppress_warnings=True,
+        stepwise=True,
+        trace=True
+    )
+
+    # Return the best order and seasonal order
+    return model.order, model.seasonal_order
+
+order, seasonal_order = find_sarima_params(data['df'][PREDICTION_COLUMN], seasonal_period=1)
+
+sarima_model = SARIMAX(data['df'][PREDICTION_COLUMN], order=order, seasonal_order=seasonal_order, enforce_stationarity=False, enforce_invertibility=False)
+sarima_fit = sarima_model.fit()
+sarima_fitted_values = sarima_fit.fittedvalues
+
+sarima_predictions = sarima_fit.forecast(steps=PREDICTION_STEPS)
 
 
 last_n_days = data["x_test"][-1].reshape((input_shape))
@@ -377,3 +411,43 @@ future_prices = multi_step_predict(
 print(f"Predicted future 'Close' prices for the next {PREDICTION_STEPS} days:")
 for i, price in enumerate(future_prices, 1):
     print(f"Day {i}: {price:.2f}")
+
+ensemble_predictions = [(dl + sarima) / 2 for dl, sarima in zip(future_prices, sarima_predictions)]
+
+print(f"Predicted DL + SARIMA's next {PREDICTION_STEPS} days:")
+for i, price in enumerate(ensemble_predictions, 1):
+    print(f"Day {i}: {price:.2f}")
+
+
+
+# Define future dates using the converted Timestamp
+future_dates = pd.date_range(start=data['df'].index[-1], periods=PREDICTION_STEPS + 1, freq='B')[1:]
+
+
+# Shape the sarima fitted values to be the length of the actual prices, and create a line for the ensemble of
+# it with the dl model training results
+sarima_fitted_values = sarima_fitted_values[-len(actual_prices):]
+ensemble_values = [(dl + sarima) / 2 for dl, sarima in zip(predicted_prices, sarima_fitted_values)]
+
+# Plot the original prices (actual and predicted on test data), then plot the sarima and ensemble training
+plt.figure(figsize=(12, 6))
+plt.plot(data['df'].index[-len(actual_prices):], actual_prices, color="black", label=f"Actual {COMPANY} Price")
+plt.plot(data['df'].index[-len(predicted_prices):], predicted_prices, color="green", label=f"Trained DL {COMPANY} Price")
+plt.plot(data['df'].index[-len(sarima_fitted_values):], sarima_fitted_values, color="pink", label=f"Trained SARIMA {COMPANY} Price")
+plt.plot(data['df'].index[-len(ensemble_values):], ensemble_values, color="brown", label=f"Trained SARIMA + DL {COMPANY} Price")
+
+
+# Add future DL predictions, SARIMA predictions, and ensemble predictions
+plt.plot(future_dates, future_prices, color="blue", label="Future DL Predictions", linestyle='dashed')
+plt.plot(future_dates, sarima_predictions, color="orange", label="SARIMA Predictions", linestyle='dashed')
+plt.plot(future_dates, ensemble_predictions, color="purple", label="Ensemble Predictions (DL + SARIMA)", linestyle='dashed')
+
+# Add plot title, axis labels, and legend
+plt.title(f"{COMPANY} Share Price Prediction")
+plt.xlabel("Time")
+plt.ylabel(f"{COMPANY} Share Price")
+plt.legend()
+
+# Show the plot
+plt.grid(True)
+plt.show()
