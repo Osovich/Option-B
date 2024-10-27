@@ -458,13 +458,23 @@ async def main():
     pd.DataFrame(predicted_prices, columns=["Predicted Prices"]).to_csv('predicted_prices.csv', index=False)
     pd.DataFrame(actual_prices, columns=["Actual Prices"]).to_csv('actual_prices.csv', index=False)
 
-    order, seasonal_order = find_sarima_params(data['df'][PREDICTION_COLUMN], seasonal_period=1)
+    def sarima_ensembler():
+        order, seasonal_order = find_sarima_params(data['df'][PREDICTION_COLUMN], seasonal_period=1)
 
-    sarima_model = SARIMAX(data['df'][PREDICTION_COLUMN], order=order, seasonal_order=seasonal_order, enforce_stationarity=False, enforce_invertibility=False)
-    sarima_fit = sarima_model.fit()
-    sarima_fitted_values = sarima_fit.fittedvalues
+        sarima_model = SARIMAX(data['df'][PREDICTION_COLUMN], order=order, seasonal_order=seasonal_order, enforce_stationarity=False, enforce_invertibility=False)
+        sarima_fit = sarima_model.fit()
+        sarima_fitted_values = sarima_fit.fittedvalues
 
-    sarima_predictions = sarima_fit.forecast(steps=PREDICTION_STEPS)
+        sarima_predictions = sarima_fit.forecast(steps=PREDICTION_STEPS)
+        ensemble_predictions = [(dl + sarima) / 2 for dl, sarima in zip(future_prices, sarima_predictions)]
+        # Shape the sarima fitted values to be the length of the actual prices, and create a line for the ensemble of
+        # it with the dl model training results
+        sarima_fitted_values = sarima_fitted_values[-len(actual_prices):]
+        ensemble_values = [(dl + sarima) / 2 for dl, sarima in zip(predicted_prices, sarima_fitted_values)]
+        
+        return sarima_predictions, ensemble_predictions, sarima_fitted_values, ensemble_values
+
+    
 
 
     last_n_days = data["x_test"][-1].reshape((input_shape))
@@ -476,12 +486,13 @@ async def main():
         scaler=data["column_scaler"][PREDICTION_COLUMN],
         prediction_column=PREDICTION_COLUMN
     )
+    
+    sarima_predictions, ensemble_predictions, sarima_fitted_values, ensemble_values = sarima_ensembler()
 
     print(f"Predicted future 'Close' prices for the next {PREDICTION_STEPS} days:")
     for i, price in enumerate(future_prices, 1):
         print(f"Day {i}: {price:.2f}")
 
-    ensemble_predictions = [(dl + sarima) / 2 for dl, sarima in zip(future_prices, sarima_predictions)]
 
     print(f"Predicted DL + SARIMA's next {PREDICTION_STEPS} days:")
     for i, price in enumerate(ensemble_predictions, 1):
@@ -493,10 +504,7 @@ async def main():
     future_dates = pd.date_range(start=data['df'].index[-1], periods=PREDICTION_STEPS + 1, freq='B')[1:]
 
 
-    # Shape the sarima fitted values to be the length of the actual prices, and create a line for the ensemble of
-    # it with the dl model training results
-    sarima_fitted_values = sarima_fitted_values[-len(actual_prices):]
-    ensemble_values = [(dl + sarima) / 2 for dl, sarima in zip(predicted_prices, sarima_fitted_values)]
+    
 
     # Plot the original prices (actual and predicted on test data), then plot the sarima and ensemble training
     plt.figure(figsize=(12, 6))
