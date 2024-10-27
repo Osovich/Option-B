@@ -5,6 +5,15 @@ import pandas as pd
 import yfinance as yf
 import pickle
 import mplfinance as mpf
+from twikit import Client
+from collections import Counter
+import time
+from datetime import timedelta
+
+import asyncio
+
+
+
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, LSTM, GRU, SimpleRNN, Bidirectional
@@ -18,16 +27,15 @@ from pmdarima.arima import ADFTest
 from sklearn.metrics import mean_squared_error
 
 # Define parameters
-COMPANY = "CBA.AX"  
+COMPANY = "TSLA"  
 DATA_START_DATE = '2015-01-01'
 DATA_END_DATE = '2022-12-31'
 SAVE_DATA = True
 PREDICTION_DAYS = 60
 SPLIT_METHOD = 'random'
 SPLIT_RATIO = 0.8
-SPLIT_DATE = '2021-01-02'
+SPLIT_DATE = '2021-06-01'
 FEATURE_COLUMNS = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
-# FEATURE_COLUMNS = ['Close']
 SCALE_FEATURES = True
 SCALE_MIN = 0
 SCALE_MAX = 1
@@ -36,12 +44,61 @@ PREDICTION_COLUMN = "Close"
 EPOCHS = 20
 BATCH_SIZE = 64
 PREDICTION_STEPS = 10
+ML = SimpleRNN
+NUM_LAYERS = 3
+LAYER_SIZE = 50
+TWEETS = True
+MAX_TWEETS = 200
+
+async def fetch_tweets(client, company_name, start_date, end_date, max_tweets=500):
+    all_tweets = []
+    
+    # Convert the start and end dates to datetime objects
+    current_start_date = pd.to_datetime(end_date)
+    current_start_date -= timedelta(days=1)
+    current_end_date = pd.to_datetime(end_date)
+    global_start_date = pd.to_datetime(DATA_START_DATE)
+    
+    # Initial search for tweets
+    while len(all_tweets) < max_tweets and current_start_date >= global_start_date:
+        tweets = await client.search_tweet(f'from:${company_name} since:{current_start_date.strftime("%Y-%m-%d")} until:{current_end_date.strftime("%Y-%m-%d")}', 'Latest', count=20)
+        print(f'from:${company_name} since:{current_start_date.strftime("%Y-%m-%d")} until:{current_end_date.strftime("%Y-%m-%d")}')
+        # Add tweets to the list
+        all_tweets.extend(tweet.created_at_datetime for tweet in tweets)
+        
+        # Decrement the start and end date by one day
+        current_start_date -= timedelta(days=1)
+        current_end_date -= timedelta(days=1)
+        
+        # sleep to avoid hitting rate limits
+        time.sleep(1)
+        
+        # Break if no tweets are returned (can also use other break conditions)
+        if not tweets:
+            break
+    
+    return all_tweets
 
 
+def get_tweet_count_per_day(tweets):
+    # Extract only the date (YYYY-MM-DD) from each tweet's 'created_at' timestamp
+    tweet_dates = [tweet.strftime('%Y-%m-%d') for tweet in tweets]
+    
+    # Use Counter to count the occurrences of each date
+    tweet_count_by_day = Counter(tweet_dates)
+    
+    # Convert the counter to a DataFrame
+    df = pd.DataFrame(tweet_count_by_day.items(), columns=['Date', 'Tweet_count'])
+    
+    # Sort the DataFrame by date
+    df['Date'] = pd.to_datetime(df['Date'])
+    df = df.sort_values(by='Date').reset_index(drop=True)
+    print(df)
+    
+    return df
 
 
-
-def load_and_process_data(
+async def load_and_process_data(
     company, 
     start_date, 
     end_date,
@@ -56,7 +113,8 @@ def load_and_process_data(
     scale_min=0, 
     scale_max=1, 
     save_scalers=False,
-    data_dir='data'
+    data_dir='data',
+    tweets=False
 ): 
     """
     Load and process stock data with multiple features.
@@ -77,6 +135,7 @@ def load_and_process_data(
         scale_max (float): Maximum value to scale the feature columns.
         save_scalers (bool): Whether to save the scalers to a file.
         data_dir (str): Directory to save the data.
+        tweets (bool): Wether or not to fetch tweets for training and testing.
 
     Returns:
         processed_data: Dictionary containing processed data and other relevant information.
@@ -99,8 +158,26 @@ def load_and_process_data(
         if save_data:
             data.to_csv(file_path)
     
-    # Handle NaN values by dropping them
-    data = data.dropna()
+    if tweets:
+        FEATURE_COLUMNS.append('Tweet_count')
+        # Load Tweets and make dataframe
+        client = Client('en-US')
+
+        client.load_cookies('cookies.json')
+        
+        all_tweets = await fetch_tweets(client, company, start_date, end_date, max_tweets=MAX_TWEETS)
+
+        # Get a DataFrame with the count of tweets per day
+        tweets_df = get_tweet_count_per_day(all_tweets)
+        tweets_df['Date'] = pd.to_datetime(tweets_df['Date'])
+
+        data['Date'] = pd.to_datetime(data.index)
+
+        data = pd.merge(data.reset_index(drop=True), tweets_df, on='Date', how='left').set_index('Date')
+
+    # Handle NaN values by filling them with 0
+    data = data.fillna(0)
+    print(data)
    
     # Store the original data and relevant details in a dictionary
     processed_data = {
@@ -167,7 +244,6 @@ def load_and_process_data(
 
     processed_data["x_test"] = np.array(x_test).reshape(-1, prediction_days, len(feature_columns))
     processed_data["y_test"] = np.array(y_test)
-
     return processed_data
 
 def multi_step_predict(model, last_n_days, prediction_steps, feature_columns, scaler, prediction_column='Close'):
@@ -315,63 +391,6 @@ def create_dl_model(layer_type, num_layers, layer_size, input_shape, dropout_rat
     model.compile(loss=loss, metrics = ["mean_squared_error"], optimizer=optimizer)
     
     return model
-
-
-# Load and process data
-data = load_and_process_data(
-    company=COMPANY, 
-    start_date=DATA_START_DATE, 
-    end_date=DATA_END_DATE, 
-    save_data=SAVE_DATA,
-    prediction_column=PREDICTION_COLUMN,
-    prediction_days=PREDICTION_DAYS,
-    split_method=SPLIT_METHOD, 
-    split_ratio=SPLIT_RATIO, 
-    split_date=SPLIT_DATE,
-    feature_columns=FEATURE_COLUMNS,
-    scale_features=SCALE_FEATURES,
-    scale_min=SCALE_MIN,
-    scale_max=SCALE_MAX,
-    save_scalers=SAVE_SCALERS,
-)
-
-# # Plot candlestick chart
-# plot_candlestick_chart(data['df'], title=f"{COMPANY} Candlestick Chart", n=5)
-
-# # Plot boxplot chart
-# plot_boxplot_chart(data['df'], title=f"{COMPANY} Boxplot Chart", n=10)
-
-layer_type = SimpleRNN  # Can be 'LSTM', 'GRU', or 'SimpleRNN'
-num_layers = 3
-layer_size = 50
-input_shape = (1, data["x_train"].shape[1], len(FEATURE_COLUMNS))  # Timesteps and features
-
-
-# Create and compile the model
-model = create_dl_model(layer_type, num_layers, layer_size, input_shape)
-
-# Train the model
-model.fit(data["x_train"], data["y_train"], epochs=EPOCHS, batch_size=BATCH_SIZE)
-
-# Test the model and plot predictions
-actual_prices = data["column_scaler"][PREDICTION_COLUMN].inverse_transform(data["y_test"].reshape(-1, 1))
-predicted_prices = model.predict(data['x_test'])
-
-predicted_prices = data["column_scaler"][PREDICTION_COLUMN].inverse_transform(predicted_prices)
-
-
-
-# Save predictions
-pd.DataFrame(predicted_prices, columns=["Predicted Prices"]).to_csv('predicted_prices.csv', index=False)
-pd.DataFrame(actual_prices, columns=["Actual Prices"]).to_csv('actual_prices.csv', index=False)
-# data['df'].index.freq = pd.infer_freq(data['df'].index)
-# if data['df'].index.freq is None:  # If frequency couldn't be inferred
-#     data['df'].index = data['df'].index.to_period('B').to_timestamp()  # Set frequency to daily
-
-# data['df'] = data['df'].dropna()
-
-
-
 def find_sarima_params(data, seasonal_period):
     # Perform auto_arima to find the best order and seasonal_order
     model = auto_arima(
@@ -389,65 +408,117 @@ def find_sarima_params(data, seasonal_period):
     # Return the best order and seasonal order
     return model.order, model.seasonal_order
 
-order, seasonal_order = find_sarima_params(data['df'][PREDICTION_COLUMN], seasonal_period=1)
+async def main():
+    # Load and process data
+    data = await load_and_process_data(
+        company=COMPANY, 
+        start_date=DATA_START_DATE, 
+        end_date=DATA_END_DATE, 
+        save_data=SAVE_DATA,
+        prediction_column=PREDICTION_COLUMN,
+        prediction_days=PREDICTION_DAYS,
+        split_method=SPLIT_METHOD, 
+        split_ratio=SPLIT_RATIO, 
+        split_date=SPLIT_DATE,
+        feature_columns=FEATURE_COLUMNS,
+        scale_features=SCALE_FEATURES,
+        scale_min=SCALE_MIN,
+        scale_max=SCALE_MAX,
+        save_scalers=SAVE_SCALERS,
+        tweets=TWEETS
+    )
 
-sarima_model = SARIMAX(data['df'][PREDICTION_COLUMN], order=order, seasonal_order=seasonal_order, enforce_stationarity=False, enforce_invertibility=False)
-sarima_fit = sarima_model.fit()
-sarima_fitted_values = sarima_fit.fittedvalues
+    # # Plot candlestick chart
+    # plot_candlestick_chart(data['df'], title=f"{COMPANY} Candlestick Chart", n=5)
 
-sarima_predictions = sarima_fit.forecast(steps=PREDICTION_STEPS)
+    # # Plot boxplot chart
+    # plot_boxplot_chart(data['df'], title=f"{COMPANY} Boxplot Chart", n=10)
 
-
-last_n_days = data["x_test"][-1].reshape((input_shape))
-future_prices = multi_step_predict(
-    model, 
-    last_n_days, 
-    PREDICTION_STEPS, 
-    feature_columns=FEATURE_COLUMNS, 
-    scaler=data["column_scaler"][PREDICTION_COLUMN],
-    prediction_column=PREDICTION_COLUMN
-)
-
-print(f"Predicted future 'Close' prices for the next {PREDICTION_STEPS} days:")
-for i, price in enumerate(future_prices, 1):
-    print(f"Day {i}: {price:.2f}")
-
-ensemble_predictions = [(dl + sarima) / 2 for dl, sarima in zip(future_prices, sarima_predictions)]
-
-print(f"Predicted DL + SARIMA's next {PREDICTION_STEPS} days:")
-for i, price in enumerate(ensemble_predictions, 1):
-    print(f"Day {i}: {price:.2f}")
-
-
-
-# Define future dates using the converted Timestamp
-future_dates = pd.date_range(start=data['df'].index[-1], periods=PREDICTION_STEPS + 1, freq='B')[1:]
+    layer_type = ML  # Can be 'LSTM', 'GRU', or 'SimpleRNN'
+    num_layers = NUM_LAYERS
+    layer_size = LAYER_SIZE
+    input_shape = (1, data["x_train"].shape[1], len(FEATURE_COLUMNS))  # Timesteps and features
 
 
-# Shape the sarima fitted values to be the length of the actual prices, and create a line for the ensemble of
-# it with the dl model training results
-sarima_fitted_values = sarima_fitted_values[-len(actual_prices):]
-ensemble_values = [(dl + sarima) / 2 for dl, sarima in zip(predicted_prices, sarima_fitted_values)]
+    # Create and compile the model
+    model = create_dl_model(layer_type, num_layers, layer_size, input_shape)
 
-# Plot the original prices (actual and predicted on test data), then plot the sarima and ensemble training
-plt.figure(figsize=(12, 6))
-plt.plot(data['df'].index[-len(actual_prices):], actual_prices, color="black", label=f"Actual {COMPANY} Price")
-plt.plot(data['df'].index[-len(predicted_prices):], predicted_prices, color="green", label=f"Trained DL {COMPANY} Price")
-plt.plot(data['df'].index[-len(sarima_fitted_values):], sarima_fitted_values, color="pink", label=f"Trained SARIMA {COMPANY} Price")
-plt.plot(data['df'].index[-len(ensemble_values):], ensemble_values, color="brown", label=f"Trained SARIMA + DL {COMPANY} Price")
+    # Train the model
+    model.fit(data["x_train"], data["y_train"], epochs=EPOCHS, batch_size=BATCH_SIZE)
+
+    # Test the model and plot predictions
+    actual_prices = data["column_scaler"][PREDICTION_COLUMN].inverse_transform(data["y_test"].reshape(-1, 1))
+    predicted_prices = model.predict(data['x_test'])
+
+    predicted_prices = data["column_scaler"][PREDICTION_COLUMN].inverse_transform(predicted_prices)
 
 
-# Add future DL predictions, SARIMA predictions, and ensemble predictions
-plt.plot(future_dates, future_prices, color="blue", label="Future DL Predictions", linestyle='dashed')
-plt.plot(future_dates, sarima_predictions, color="orange", label="SARIMA Predictions", linestyle='dashed')
-plt.plot(future_dates, ensemble_predictions, color="purple", label="Ensemble Predictions (DL + SARIMA)", linestyle='dashed')
 
-# Add plot title, axis labels, and legend
-plt.title(f"{COMPANY} Share Price Prediction")
-plt.xlabel("Time")
-plt.ylabel(f"{COMPANY} Share Price")
-plt.legend()
+    # Save predictions
+    pd.DataFrame(predicted_prices, columns=["Predicted Prices"]).to_csv('predicted_prices.csv', index=False)
+    pd.DataFrame(actual_prices, columns=["Actual Prices"]).to_csv('actual_prices.csv', index=False)
 
-# Show the plot
-plt.grid(True)
-plt.show()
+    order, seasonal_order = find_sarima_params(data['df'][PREDICTION_COLUMN], seasonal_period=1)
+
+    sarima_model = SARIMAX(data['df'][PREDICTION_COLUMN], order=order, seasonal_order=seasonal_order, enforce_stationarity=False, enforce_invertibility=False)
+    sarima_fit = sarima_model.fit()
+    sarima_fitted_values = sarima_fit.fittedvalues
+
+    sarima_predictions = sarima_fit.forecast(steps=PREDICTION_STEPS)
+
+
+    last_n_days = data["x_test"][-1].reshape((input_shape))
+    future_prices = multi_step_predict(
+        model, 
+        last_n_days, 
+        PREDICTION_STEPS, 
+        feature_columns=FEATURE_COLUMNS, 
+        scaler=data["column_scaler"][PREDICTION_COLUMN],
+        prediction_column=PREDICTION_COLUMN
+    )
+
+    print(f"Predicted future 'Close' prices for the next {PREDICTION_STEPS} days:")
+    for i, price in enumerate(future_prices, 1):
+        print(f"Day {i}: {price:.2f}")
+
+    ensemble_predictions = [(dl + sarima) / 2 for dl, sarima in zip(future_prices, sarima_predictions)]
+
+    print(f"Predicted DL + SARIMA's next {PREDICTION_STEPS} days:")
+    for i, price in enumerate(ensemble_predictions, 1):
+        print(f"Day {i}: {price:.2f}")
+
+
+
+    # Define future dates using the converted Timestamp
+    future_dates = pd.date_range(start=data['df'].index[-1], periods=PREDICTION_STEPS + 1, freq='B')[1:]
+
+
+    # Shape the sarima fitted values to be the length of the actual prices, and create a line for the ensemble of
+    # it with the dl model training results
+    sarima_fitted_values = sarima_fitted_values[-len(actual_prices):]
+    ensemble_values = [(dl + sarima) / 2 for dl, sarima in zip(predicted_prices, sarima_fitted_values)]
+
+    # Plot the original prices (actual and predicted on test data), then plot the sarima and ensemble training
+    plt.figure(figsize=(12, 6))
+    plt.plot(data['df'].index[-len(actual_prices):], actual_prices, color="black", label=f"Actual {COMPANY} Price")
+    plt.plot(data['df'].index[-len(predicted_prices):], predicted_prices, color="green", label=f"Trained DL {COMPANY} Price")
+    plt.plot(data['df'].index[-len(sarima_fitted_values):], sarima_fitted_values, color="pink", label=f"Trained SARIMA {COMPANY} Price")
+    plt.plot(data['df'].index[-len(ensemble_values):], ensemble_values, color="brown", label=f"Trained SARIMA + DL {COMPANY} Price")
+
+
+    # Add future DL predictions, SARIMA predictions, and ensemble predictions
+    plt.plot(future_dates, future_prices, color="blue", label="Future DL Predictions", linestyle='dashed')
+    plt.plot(future_dates, sarima_predictions, color="orange", label="SARIMA Predictions", linestyle='dashed')
+    plt.plot(future_dates, ensemble_predictions, color="purple", label="Ensemble Predictions (DL + SARIMA)", linestyle='dashed')
+
+    # Add plot title, axis labels, and legend
+    plt.title(f"{COMPANY} Share Price Prediction")
+    plt.xlabel("Time")
+    plt.ylabel(f"{COMPANY} Share Price")
+    plt.legend()
+
+    # Show the plot
+    plt.grid(True)
+    plt.show()
+
+asyncio.run(main())
