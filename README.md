@@ -23,4 +23,8 @@ Num_Layers: Number of layers to use.<br />
 Layer_size: Size per layer to use.<br />
 Tweets: Whether or not to use Tweets for prediction.<br />
 Max_tweets: Maximum number of tweets allowed, keep under 500 to not break the Rate Limit.<br />
+
+In order to use Tweets, you must use a Twitter account, and load the Cookies into a json file in the same folder as the program called cookies.json. The json file will have 2 keys, "auth_token" and ct0. To find these values, you must be logged into a Twitter account, press F12 and look for the Application Tab, then in the left list, enter Cookies, then X.com, and the first 2 values are the ones to use.<br />
+![image](https://github.com/user-attachments/assets/c3eb1f32-e52f-4472-bc8f-bd29af32e532)
+
 [Report 1.pdf](https://github.com/user-attachments/files/16637333/FrancoJimenez_104173896_B01.pdf)
